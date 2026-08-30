@@ -1,6 +1,6 @@
 [project]
 name = "nats-bridge-core"
-version = "0.2.0"
+version = "0.3.0"
 description = "Shared plumbing for the Python NATS sidecar bridges: logging, JetStream publisher, metrics server, settings base"
 readme = "README.md"
 license = "GPL-2.0-or-later"
