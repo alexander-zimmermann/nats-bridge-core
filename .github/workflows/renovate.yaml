@@ -1,0 +1,38 @@
+name: "Maintenance: Renovate"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .renovaterc.json5
+  schedule:
+    - cron: '0 * * * *' # Every hour
+  issues:
+    types:
+      - edited
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: Dry Run
+        type: boolean
+        default: false
+      logLevel:
+        description: Log Level
+        default: debug
+      version:
+        description: Renovate Version
+        default: latest
+
+jobs:
+  renovate:
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: alexander-zimmermann/lares/.github/workflows/sidecar-renovate.yaml@main
+    with:
+      dryRun: ${{ inputs.dryRun && 'full' || '' }}
+      logLevel: ${{ inputs.logLevel || 'debug' }}
+      version: ${{ inputs.version || 'latest' }}
+    secrets: inherit

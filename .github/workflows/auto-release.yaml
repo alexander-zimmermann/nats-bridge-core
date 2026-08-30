@@ -1,0 +1,11 @@
+name: Auto Release
+
+on:
+  schedule:
+    - cron: "0 6 1 * *" # 1st of month, 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  release:
+    uses: alexander-zimmermann/lares/.github/workflows/sidecar-python-auto-release.yaml@main
+    secrets: inherit
