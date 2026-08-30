@@ -19,9 +19,6 @@
     {
       "matchManagers": ["github-actions"],
       "groupName": "github-actions",
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true,
     },
     {
       "matchManagers": ["pep621"],
