@@ -15,7 +15,10 @@ from nats.errors import NoRespondersError
 from nats.errors import TimeoutError as NATSTimeoutError
 from nats.js import JetStreamContext
 from nats.js.errors import APIError, NoStreamResponseError
+from opentelemetry import context as otel_context
+from opentelemetry.trace import StatusCode
 
+from . import tracing
 from .config import NatsSettings
 
 logger = logging.getLogger(__name__)
@@ -65,8 +68,8 @@ class Publisher:
         self._validate = validate
         self._nc: NatsClient | None = None
         self._js: JetStreamContext | None = None
-        self._queue: asyncio.Queue[tuple[object, str, dict[str, Any]]] = asyncio.Queue(
-            maxsize=queue_max
+        self._queue: asyncio.Queue[tuple[object, str, dict[str, Any], otel_context.Context]] = (
+            asyncio.Queue(maxsize=queue_max)
         )
         self._worker: asyncio.Task[None] | None = None
 
@@ -139,10 +142,19 @@ class Publisher:
     async def subscribe_core(
         self, subject: str, callback: Callable[[Msg], Awaitable[None]]
     ) -> None:
-        """Core (non-JetStream) subscription, used for command subjects."""
+        """Core (non-JetStream) subscription, used for command subjects.
+
+        Each delivery is handled inside a consumer span joined to the trace
+        carried in the message headers.
+        """
         if self._nc is None:
             raise RuntimeError("subscribe_core() before connect()")
-        await self._nc.subscribe(subject, cb=callback)
+
+        async def handle(msg: Msg) -> None:
+            with tracing.consumer_span(msg, subject):
+                await callback(msg)
+
+        await self._nc.subscribe(subject, cb=handle)
         logger.info("subscribed to %s", subject)
 
     async def close(self) -> None:
@@ -166,11 +178,13 @@ class Publisher:
         """Queue one message for publishing; safe to call from sync callbacks.
 
         `ctx` is passed back to the metrics hooks untouched, so the bridge can
-        label the counters however it likes. Returns False (and counts a
-        queue_full error) when the buffer is full, e.g. during a NATS outage.
+        label the counters however it likes. The caller's trace context travels
+        with the message, so the publish span joins the caller's trace. Returns
+        False (and counts a queue_full error) when the buffer is full, e.g.
+        during a NATS outage.
         """
         try:
-            self._queue.put_nowait((ctx, subject, payload))
+            self._queue.put_nowait((ctx, subject, payload, otel_context.get_current()))
         except asyncio.QueueFull:
             self._metrics.count_error(ctx, "queue_full")
             logger.warning(
@@ -181,62 +195,78 @@ class Publisher:
 
     async def _drain_queue(self) -> None:
         while True:
-            ctx, subject, payload = await self._queue.get()
+            ctx, subject, payload, trace_ctx = await self._queue.get()
+            token = otel_context.attach(trace_ctx)
             try:
                 await self.publish(ctx, subject, payload)
             except Exception:
                 logger.exception("unexpected error publishing %s", subject)
             finally:
+                otel_context.detach(token)
                 self._queue.task_done()
 
     async def publish(self, ctx: object, subject: str, payload: dict[str, Any]) -> bool:
-        """Publish one message, waiting for a JetStream ack.
+        """Publish one message inside a producer span, waiting for a JetStream ack.
 
         Returns True on success, False on a permanent failure after retries.
         """
+        with tracing.producer_span(subject) as span:
+            reason = await self._publish(ctx, subject, payload)
+            if reason is not None:
+                span.set_status(StatusCode.ERROR, reason)
+            return reason is None
+
+    async def _publish(self, ctx: object, subject: str, payload: dict[str, Any]) -> str | None:
+        """The publish itself; returns the error reason counted in metrics, None on success."""
         if self._validate is not None:
             try:
                 self._validate(payload)
             except Exception as exc:
                 self._metrics.count_error(ctx, "schema")
                 logger.error("payload failed validation: %s | payload=%s", exc, payload)
-                return False
+                return "schema"
 
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        headers = tracing.outbound_headers() or None
 
+        reason = "other"
         backoff = 0.1
         for attempt in range(1, 4):
             if not self._js:
                 self._metrics.count_error(ctx, "other")
-                return False
+                return "other"
             try:
-                await self._js.publish(subject, body, timeout=5.0)
+                await self._js.publish(subject, body, timeout=5.0, headers=headers)
                 self._metrics.count_published(ctx)
-                return True
+                return None
             except NoStreamResponseError:
                 # Stream/subject misconfiguration: retrying won't help, and any
                 # sleep here would stall the ordered publish queue.
                 self._metrics.count_error(ctx, "no_stream")
                 logger.error("no stream matches subject %s (attempt %d)", subject, attempt)
-                return False
+                return "no_stream"
             except NATSTimeoutError:
-                self._metrics.count_error(ctx, "timeout")
+                reason = "timeout"
+                self._metrics.count_error(ctx, reason)
                 logger.warning("publish timeout for %s (attempt %d)", subject, attempt)
             except NoRespondersError:
-                self._metrics.count_error(ctx, "nak")
+                reason = "nak"
+                self._metrics.count_error(ctx, reason)
                 logger.warning("no responders for %s (attempt %d)", subject, attempt)
             except APIError as exc:
-                self._metrics.count_error(ctx, "nak")
+                reason = "nak"
+                self._metrics.count_error(ctx, reason)
                 logger.warning("jetstream api error for %s (attempt %d): %s", subject, attempt, exc)
             except Exception:
-                self._metrics.count_error(ctx, "other")
+                reason = "other"
+                self._metrics.count_error(ctx, reason)
                 logger.exception("unexpected publish error for %s (attempt %d)", subject, attempt)
 
             if attempt < 3:
                 await asyncio.sleep(backoff)
                 backoff *= 2
 
-        return False
+        return reason
 
     async def _on_disconnect(self) -> None:
         self._metrics.set_connected(False)

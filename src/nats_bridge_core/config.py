@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,6 +42,9 @@ class NatsSettings(BaseSettings):
     metrics_port: int = 9090
     log_level: str = "INFO"
     log_format: LogFormat = LogFormat.JSON
+    # OTLP/HTTP collector base URL (http://host:4318); unset keeps tracing off
+    tracing_endpoint: str | None = None
+    tracing_sampling_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
 
     @property
     def nats_servers_list(self) -> list[str]:

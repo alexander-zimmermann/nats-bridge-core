@@ -12,6 +12,7 @@ Only what was identical across all four bridges, measured rather than guessed:
 | `logging_setup` | JSON formatter, stdout-failure-tracking handler, log-emit watchdog |
 | `metrics` | the `/metrics` and `/healthz` HTTP server |
 | `publisher` | JetStream publish with ack, retry, ordered queue, reconnect, drain on shutdown |
+| `tracing` | OTLP tracer provider, W3C trace context over NATS headers, producer/consumer spans |
 | `config` | `NatsSettings` — NATS connection, auth precedence, observability fields |
 
 ## What is deliberately not in here
@@ -45,6 +46,24 @@ class Metrics:  # in the bridge
 ```
 
 A bridge that needs no labels can ignore `ctx` entirely.
+
+## Tracing
+
+`tracing.configure(settings, service_name="knx-nats-bridge")` installs an
+OTLP/HTTP tracer provider when `TRACING_ENDPOINT` is set to the collector base
+URL (for example `http://alloy-alloy-receiver.alloy.svc.cluster.local:4318`);
+without it the OpenTelemetry API stays a no-op. `TRACING_SAMPLING_RATIO`
+(default 0.1) is the root sampler, child spans follow their parent. Call
+`tracing.shutdown()` on exit to flush.
+
+`Publisher.enqueue()` captures the caller's trace context, `publish()` runs in a
+producer span and sends `traceparent` as a NATS header, and `subscribe_core()`
+handles every delivery in a consumer span joined to the trace in the headers. A
+bridge with its own subscription wraps its handler in
+`tracing.consumer_span(msg, subject)`.
+
+Redpanda Connect samples by trace ID rather than by the parent's flag, so keep
+the ratio equal on both sides to get whole traces.
 
 ## Install
 
