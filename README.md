@@ -5,7 +5,8 @@ Shared plumbing for the Python NATS sidecar bridges — `knx-`, `dyson-`,
 
 ## What is in here
 
-Only what was identical across all four bridges, measured rather than guessed:
+Only what was identical across all four bridges, measured rather than guessed,
+plus plumbing every bridge would otherwise copy verbatim (tracing):
 
 | Module | Contents |
 | --- | --- |

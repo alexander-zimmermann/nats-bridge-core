@@ -72,8 +72,13 @@ _header_getter = _HeaderGetter()
 
 
 def context_from_headers(headers: Mapping[str, str] | None) -> Context:
-    """Trace context carried in NATS headers; the current context when there is none."""
-    return extract(headers or {}, getter=_header_getter)
+    """Trace context carried in NATS headers; empty when there is none.
+
+    Deliberately not the current context: a delivery without a traceparent is a
+    fresh root, not a child of whatever span was active when the subscription
+    task was created.
+    """
+    return extract(headers or {}, context=Context(), getter=_header_getter)
 
 
 def outbound_headers() -> dict[str, str]:
@@ -83,7 +88,7 @@ def outbound_headers() -> dict[str, str]:
     return headers
 
 
-def _attributes(operation: str, subject: str) -> dict[str, str]:
+def _messaging_attributes(operation: str, subject: str) -> dict[str, str]:
     return {
         "messaging.system": "nats",
         "messaging.operation.type": operation,
@@ -95,7 +100,7 @@ def _attributes(operation: str, subject: str) -> dict[str, str]:
 def producer_span(subject: str) -> Iterator[Span]:
     """Span around one publish; the trace root when no span is active."""
     with _tracer.start_as_current_span(
-        f"send {subject}", kind=SpanKind.PRODUCER, attributes=_attributes("send", subject)
+        f"send {subject}", kind=SpanKind.PRODUCER, attributes=_messaging_attributes("send", subject)
     ) as span:
         yield span
 
@@ -104,11 +109,11 @@ def producer_span(subject: str) -> Iterator[Span]:
 def consumer_span(msg: Msg, subscription: str | None = None) -> Iterator[Span]:
     """Span around handling one delivered message, joined to the trace in its headers.
 
-    `subscription` is the subscribed subject when it differs from the message
-    subject, i.e. a wildcard.
+    `subscription` is the subscribed subject; it is recorded when it is a
+    wildcard, i.e. differs from the message subject.
     """
-    attributes = _attributes("process", msg.subject)
-    if subscription is not None:
+    attributes = _messaging_attributes("process", msg.subject)
+    if subscription is not None and subscription != msg.subject:
         attributes["messaging.destination.subscription.name"] = subscription
     with _tracer.start_as_current_span(
         f"process {msg.subject}",

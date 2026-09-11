@@ -1,9 +1,10 @@
 """Shared plumbing for the Python NATS sidecar bridges.
 
 What lives here is what was byte-identical or mechanically identical across
-every bridge: logging, the metrics server, the JetStream publish loop, the
-tracing wiring, and the NATS half of settings. Device lifecycle — connecting to hardware, polling,
-normalising payloads — stays in each bridge.
+every bridge — logging, the metrics server, the JetStream publish loop, the
+NATS half of settings — plus plumbing every bridge would otherwise copy
+verbatim, the tracing wiring. Device lifecycle — connecting to hardware,
+polling, normalising payloads — stays in each bridge.
 """
 
 from . import tracing

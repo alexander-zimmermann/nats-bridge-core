@@ -7,7 +7,7 @@ import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from nats.aio.client import Client as NatsClient
 from nats.aio.msg import Msg
@@ -29,6 +29,15 @@ _PUBLISH_QUEUE_MAX = 1000
 
 # How long close() waits for the queue to drain before cancelling the worker.
 _CLOSE_FLUSH_TIMEOUT_SECONDS = 5.0
+
+
+class _Queued(NamedTuple):
+    """One message waiting for the worker, with the trace context of whoever enqueued it."""
+
+    ctx: object
+    subject: str
+    payload: dict[str, Any]
+    trace_context: otel_context.Context
 
 
 class PublisherMetrics(Protocol):
@@ -68,9 +77,7 @@ class Publisher:
         self._validate = validate
         self._nc: NatsClient | None = None
         self._js: JetStreamContext | None = None
-        self._queue: asyncio.Queue[tuple[object, str, dict[str, Any], otel_context.Context]] = (
-            asyncio.Queue(maxsize=queue_max)
-        )
+        self._queue: asyncio.Queue[_Queued] = asyncio.Queue(maxsize=queue_max)
         self._worker: asyncio.Task[None] | None = None
 
     async def connect(self) -> None:
@@ -184,7 +191,7 @@ class Publisher:
         during a NATS outage.
         """
         try:
-            self._queue.put_nowait((ctx, subject, payload, otel_context.get_current()))
+            self._queue.put_nowait(_Queued(ctx, subject, payload, otel_context.get_current()))
         except asyncio.QueueFull:
             self._metrics.count_error(ctx, "queue_full")
             logger.warning(
@@ -195,12 +202,12 @@ class Publisher:
 
     async def _drain_queue(self) -> None:
         while True:
-            ctx, subject, payload, trace_ctx = await self._queue.get()
-            token = otel_context.attach(trace_ctx)
+            item = await self._queue.get()
+            token = otel_context.attach(item.trace_context)
             try:
-                await self.publish(ctx, subject, payload)
+                await self.publish(item.ctx, item.subject, item.payload)
             except Exception:
-                logger.exception("unexpected error publishing %s", subject)
+                logger.exception("unexpected error publishing %s", item.subject)
             finally:
                 otel_context.detach(token)
                 self._queue.task_done()

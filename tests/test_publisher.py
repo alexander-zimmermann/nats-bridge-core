@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from conftest import SPAN_ID, TRACE_ID, TRACEPARENT, make_msg
 from nats.aio.msg import Msg
 from nats.errors import TimeoutError as NATSTimeoutError
 from nats.js.errors import NoStreamResponseError
@@ -14,8 +15,6 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import SpanKind, StatusCode
 
 from nats_bridge_core import NatsSettings, Publisher
-
-TRACEPARENT = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 
 
 class FakeMetrics:
@@ -222,17 +221,12 @@ async def test_subscribe_core_handles_each_message_in_a_consumer_span(
         seen.append(trace.get_current_span().get_span_context().trace_id)
 
     await pub.subscribe_core("dev.*.command.*", handler)
-    msg = Msg(
-        _client=None,  # type: ignore[arg-type]
-        subject="dev.kitchen.command.power",
-        data=b"{}",
-        headers={"Traceparent": TRACEPARENT},
-    )
+    msg = make_msg("dev.kitchen.command.power", {"Traceparent": TRACEPARENT})
     await nc.callbacks["dev.*.command.*"](msg)
 
-    assert seen == [0x0AF7651916CD43DD8448EB211C80319C]
+    assert seen == [TRACE_ID]
     process = next(s for s in spans.get_finished_spans() if s.name.startswith("process "))
     assert process.name == "process dev.kitchen.command.power"
     assert process.kind is SpanKind.CONSUMER
-    assert process.parent is not None and process.parent.span_id == 0xB7AD6B7169203331
+    assert process.parent is not None and process.parent.span_id == SPAN_ID
     assert process.attributes["messaging.destination.subscription.name"] == "dev.*.command.*"

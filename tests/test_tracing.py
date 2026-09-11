@@ -3,21 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from nats.aio.msg import Msg
+from conftest import SPAN_ID, TRACE_ID, TRACEPARENT, make_msg
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import INVALID_SPAN, SpanKind
 from pydantic import ValidationError
 
 from nats_bridge_core import NatsSettings, tracing
-
-TRACEPARENT = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-TRACE_ID = 0x0AF7651916CD43DD8448EB211C80319C
-SPAN_ID = 0xB7AD6B7169203331
-
-
-def _msg(subject: str, headers: dict[str, str] | None = None) -> Msg:
-    return Msg(_client=None, subject=subject, data=b"{}", headers=headers)  # type: ignore[arg-type]
 
 
 def test_configure_without_endpoint_leaves_the_provider_alone() -> None:
@@ -61,8 +53,13 @@ def test_outbound_headers_carry_the_active_span() -> None:
     assert headers["traceparent"].split("-")[1] == trace_id
 
 
+def test_outbound_headers_are_empty_without_a_valid_span() -> None:
+    with trace.use_span(INVALID_SPAN):
+        assert tracing.outbound_headers() == {}
+
+
 def test_consumer_span_joins_the_trace_from_the_headers(spans: InMemorySpanExporter) -> None:
-    msg = _msg("dev.kitchen.command.power", {"traceparent": TRACEPARENT})
+    msg = make_msg("dev.kitchen.command.power", {"traceparent": TRACEPARENT})
     with tracing.consumer_span(msg, "dev.*.command.*"):
         pass
 
@@ -75,11 +72,26 @@ def test_consumer_span_joins_the_trace_from_the_headers(spans: InMemorySpanExpor
     assert span.attributes["messaging.destination.subscription.name"] == "dev.*.command.*"
 
 
-def test_consumer_span_without_headers_starts_a_root(spans: InMemorySpanExporter) -> None:
-    with tracing.consumer_span(_msg("dev.kitchen.command.power")):
+def test_consumer_span_without_headers_starts_a_root_even_inside_a_span(
+    spans: InMemorySpanExporter,
+) -> None:
+    with (
+        trace.get_tracer("test").start_as_current_span("startup"),
+        tracing.consumer_span(make_msg("dev.kitchen.command.power")),
+    ):
+        pass
+
+    process = next(s for s in spans.get_finished_spans() if s.name.startswith("process "))
+    assert process.parent is None
+
+
+def test_consumer_span_records_the_subscription_only_for_wildcards(
+    spans: InMemorySpanExporter,
+) -> None:
+    msg = make_msg("dev.kitchen.command.power")
+    with tracing.consumer_span(msg, "dev.kitchen.command.power"):
         pass
 
     (span,) = spans.get_finished_spans()
-    assert span.parent is None
     assert span.attributes is not None
     assert "messaging.destination.subscription.name" not in span.attributes
