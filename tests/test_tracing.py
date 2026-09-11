@@ -76,8 +76,10 @@ def test_consumer_span_joins_the_trace_from_the_headers(spans: InMemorySpanExpor
 
 
 def test_consumer_span_without_headers_starts_a_root(spans: InMemorySpanExporter) -> None:
-    with tracing.consumer_span(_msg("dev.kitchen.command.power"), "dev.*.command.*"):
+    with tracing.consumer_span(_msg("dev.kitchen.command.power")):
         pass
 
     (span,) = spans.get_finished_spans()
     assert span.parent is None
+    assert span.attributes is not None
+    assert "messaging.destination.subscription.name" not in span.attributes

@@ -60,7 +60,7 @@ without it the OpenTelemetry API stays a no-op. `TRACING_SAMPLING_RATIO`
 producer span and sends `traceparent` as a NATS header, and `subscribe_core()`
 handles every delivery in a consumer span joined to the trace in the headers. A
 bridge with its own subscription wraps its handler in
-`tracing.consumer_span(msg, subject)`.
+`tracing.consumer_span(msg)`.
 
 Redpanda Connect samples by trace ID rather than by the parent's flag, so keep
 the ratio equal on both sides to get whole traces.

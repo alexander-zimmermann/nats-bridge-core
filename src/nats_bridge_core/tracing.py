@@ -101,10 +101,15 @@ def producer_span(subject: str) -> Iterator[Span]:
 
 
 @contextmanager
-def consumer_span(msg: Msg, subscription: str) -> Iterator[Span]:
-    """Span around handling one delivered message, joined to the trace in its headers."""
+def consumer_span(msg: Msg, subscription: str | None = None) -> Iterator[Span]:
+    """Span around handling one delivered message, joined to the trace in its headers.
+
+    `subscription` is the subscribed subject when it differs from the message
+    subject, i.e. a wildcard.
+    """
     attributes = _attributes("process", msg.subject)
-    attributes["messaging.destination.subscription.name"] = subscription
+    if subscription is not None:
+        attributes["messaging.destination.subscription.name"] = subscription
     with _tracer.start_as_current_span(
         f"process {msg.subject}",
         context=context_from_headers(msg.headers),
