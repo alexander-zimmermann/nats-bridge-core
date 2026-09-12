@@ -1,12 +1,18 @@
-"""Publisher: queue bounds, metrics context passthrough, optional payload validation."""
+"""Publisher: queue bounds, metrics context passthrough, payload validation, trace context."""
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
+from conftest import SPAN_ID, TRACE_ID, TRACEPARENT, make_msg
+from nats.aio.msg import Msg
 from nats.errors import TimeoutError as NATSTimeoutError
 from nats.js.errors import NoStreamResponseError
+from opentelemetry import trace
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import SpanKind, StatusCode
 
 from nats_bridge_core import NatsSettings, Publisher
 
@@ -77,11 +83,13 @@ class FakeJetStream:
     def __init__(self, errors: list[Exception] | None = None) -> None:
         self.errors = list(errors or [])
         self.published: list[tuple[str, bytes]] = []
+        self.headers: list[dict[str, str] | None] = []
 
-    async def publish(self, subject: str, body: bytes, **_kwargs: Any) -> None:
+    async def publish(self, subject: str, body: bytes, **kwargs: Any) -> None:
         if self.errors:
             raise self.errors.pop(0)
         self.published.append((subject, body))
+        self.headers.append(kwargs.get("headers"))
 
 
 async def test_retries_timeouts_then_succeeds() -> None:
@@ -127,3 +135,98 @@ async def test_worker_drains_queue_in_order() -> None:
     worker.cancel()
 
     assert [s for s, _ in js.published] == ["s.one", "s.two", "s.three"]
+
+
+def _send_span(spans: InMemorySpanExporter, subject: str) -> Any:
+    return next(s for s in spans.get_finished_spans() if s.name == f"send {subject}")
+
+
+async def test_publish_sends_traceparent_of_the_enclosing_span(spans: InMemorySpanExporter) -> None:
+    pub, _ = _publisher()
+    js = FakeJetStream()
+    pub._js = js  # type: ignore[assignment]
+
+    with trace.get_tracer("test").start_as_current_span("caller") as caller:
+        assert await pub.publish("ctx", "s.one", {"v": 1}) is True
+
+    caller_sc = caller.get_span_context()
+    assert js.headers[0] is not None
+    assert js.headers[0]["traceparent"].split("-")[1] == format(caller_sc.trace_id, "032x")
+    send = _send_span(spans, "s.one")
+    assert send.kind is SpanKind.PRODUCER
+    assert send.parent is not None and send.parent.span_id == caller_sc.span_id
+    assert send.attributes["messaging.destination.name"] == "s.one"
+
+
+async def test_publish_without_caller_span_starts_a_root_trace(spans: InMemorySpanExporter) -> None:
+    pub, _ = _publisher()
+    js = FakeJetStream()
+    pub._js = js  # type: ignore[assignment]
+
+    assert await pub.publish("ctx", "s.one", {"v": 1}) is True
+
+    send = _send_span(spans, "s.one")
+    assert send.parent is None
+    assert js.headers[0] is not None
+    assert js.headers[0]["traceparent"].split("-")[1] == format(send.context.trace_id, "032x")
+
+
+async def test_enqueue_carries_the_trace_context_to_the_worker(spans: InMemorySpanExporter) -> None:
+    pub, _ = _publisher()
+    pub._js = FakeJetStream()  # type: ignore[assignment]
+
+    with trace.get_tracer("test").start_as_current_span("caller") as caller:
+        assert pub.enqueue(None, "s.one", {"v": 1}) is True
+
+    worker = asyncio.create_task(pub._drain_queue())
+    await asyncio.wait_for(pub._queue.join(), timeout=2.0)
+    worker.cancel()
+
+    caller_sc = caller.get_span_context()
+    send = _send_span(spans, "s.one")
+    assert send.context.trace_id == caller_sc.trace_id
+    assert send.parent is not None and send.parent.span_id == caller_sc.span_id
+
+
+async def test_publish_failure_marks_the_span_as_error(spans: InMemorySpanExporter) -> None:
+    pub, _ = _publisher()
+    pub._js = FakeJetStream(errors=[NoStreamResponseError()])  # type: ignore[assignment]
+
+    assert await pub.publish("ctx", "s.one", {"v": 1}) is False
+
+    send = _send_span(spans, "s.one")
+    assert send.status.status_code is StatusCode.ERROR
+    assert send.status.description == "no_stream"
+
+
+class FakeCoreClient:
+    """Records core subscriptions so a test can deliver messages by hand."""
+
+    def __init__(self) -> None:
+        self.callbacks: dict[str, Callable[[Msg], Awaitable[None]]] = {}
+
+    async def subscribe(self, subject: str, cb: Callable[[Msg], Awaitable[None]]) -> None:
+        self.callbacks[subject] = cb
+
+
+async def test_subscribe_core_handles_each_message_in_a_consumer_span(
+    spans: InMemorySpanExporter,
+) -> None:
+    pub, _ = _publisher()
+    nc = FakeCoreClient()
+    pub._nc = nc  # type: ignore[assignment]
+    seen: list[int] = []
+
+    async def handler(_: Msg) -> None:
+        seen.append(trace.get_current_span().get_span_context().trace_id)
+
+    await pub.subscribe_core("dev.*.command.*", handler)
+    msg = make_msg("dev.kitchen.command.power", {"Traceparent": TRACEPARENT})
+    await nc.callbacks["dev.*.command.*"](msg)
+
+    assert seen == [TRACE_ID]
+    process = next(s for s in spans.get_finished_spans() if s.name.startswith("process "))
+    assert process.name == "process dev.kitchen.command.power"
+    assert process.kind is SpanKind.CONSUMER
+    assert process.parent is not None and process.parent.span_id == SPAN_ID
+    assert process.attributes["messaging.destination.subscription.name"] == "dev.*.command.*"
