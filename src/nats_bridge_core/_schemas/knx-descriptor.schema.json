@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alexander-zimmermann/nats-bridge-core/schemas/knx-descriptor.schema.json",
+  "title": "KNX descriptor of a sidecar bridge",
+  "description": "Declares, per published field, the datapoint on the bus, the DPT the bridge serves and the writer behaviour. Product family only: no group addresses, no device names.",
+  "type": "object",
+  "properties": {
+    "subjects": {
+      "type": "object",
+      "description": "Keyed by the subject suffix after the device segment (state, environment, availability).",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[A-Za-z0-9_-]+$" },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "object",
+            "description": "Keyed by the payload field name; the JSON path is `$.` plus the key.",
+            "minProperties": 1,
+            "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "datapoint":     { "type": "string", "pattern": "^[^\\s.]+(\\.[^\\s.]+)*$" },
+                "dpt":           { "type": "string", "pattern": "^[0-9]+\\.[0-9]{3}$" },
+                "seed_on_start": { "type": "boolean" },
+                "min_delta":     { "type": "number", "minimum": 0 },
+                "min_delta_pct": { "type": "number", "minimum": 0 }
+              },
+              "required": ["datapoint", "dpt"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["fields"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["subjects"],
+  "additionalProperties": false
+}
