@@ -1,0 +1,18 @@
+subjects:
+  state:
+    fields:
+      power:
+        datapoint: Betrieb
+        dpt: "1.011"
+        seed_on_start: true
+        min_delta: 0
+      filter_life:
+        datapoint: Filter.Restlaufzeit
+        dpt: "5.001"
+        min_delta: 1
+        min_delta_pct: 2
+  environment:
+    fields:
+      pm25:
+        datapoint: Feinstaub-PM25
+        dpt: "9.030"

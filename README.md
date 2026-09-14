@@ -6,7 +6,8 @@ Shared plumbing for the Python NATS sidecar bridges — `knx-`, `dyson-`,
 ## What is in here
 
 Only what was identical across all four bridges, measured rather than guessed,
-plus plumbing every bridge would otherwise copy verbatim (tracing):
+plus plumbing every bridge would otherwise copy verbatim (tracing, the KNX
+descriptor):
 
 | Module | Contents |
 | --- | --- |
@@ -15,6 +16,7 @@ plus plumbing every bridge would otherwise copy verbatim (tracing):
 | `publisher` | JetStream publish with ack, retry, ordered queue, reconnect, drain on shutdown |
 | `tracing` | OTLP tracer provider, W3C trace context over NATS headers, producer/consumer spans |
 | `config` | `NatsSettings` — NATS connection, auth precedence, observability fields |
+| `knx_descriptor` | schema and loader for the `knx.yaml` a bridge ships: field → datapoint, DPT, writer behaviour |
 
 ## What is deliberately not in here
 
@@ -65,6 +67,47 @@ bridge with its own subscription wraps its handler in
 
 Redpanda Connect samples by trace ID rather than by the parent's flag, so keep
 the ratio equal on both sides to get whole traces.
+
+## KNX descriptor
+
+A sidecar whose payloads end up on the KNX bus ships `knx.yaml` at its package
+root. It describes the product family only — which published field is meant
+for which datapoint, with which DPT, and how the writer should treat it. Group
+addresses and device names are bound in lares, which generates the writer rules
+from descriptor plus binding; a field an appliance lacks is simply left out
+there.
+
+```yaml
+subjects:            # keyed by the subject suffix after the device segment
+  state:
+    fields:          # keyed by the payload field; the writer reads `$.<field>`
+      phase:
+        datapoint: Programm-Phase   # last segment(s) of the group-address name
+        dpt: "5.010"                # main.sub, three-digit sub as in the catalog
+        seed_on_start: true         # optional, default false
+        min_delta: 0                # optional, ≥ 0
+      remaining_minutes:
+        datapoint: Restzeit
+        dpt: "7.006"
+        min_delta: 1
+        min_delta_pct: 5            # optional, ≥ 0
+  environment:
+    fields:
+      temperature_c:
+        datapoint: Ist-Temperatur
+        dpt: "9.001"
+```
+
+`knx_descriptor.load_package("miele_nats_bridge")` returns the typed
+`Descriptor` (`subjects[suffix].fields[name]` with `datapoint`, `dpt`,
+`payload_path` and the behaviour keys); `knx_descriptor.load(path)` reads a
+file. Unknown keys, a missing `datapoint` or `dpt`, a DPT outside `main.sub`,
+negative deltas, duplicate keys and unquoted YAML words (`on`, `yes`) raise
+`DescriptorError` listing every offending field — a bridge's CI loads its own
+descriptor so a typo fails there, not in the generator. Subject suffixes are
+single NATS tokens, field names JSON identifiers, datapoints dot-separated
+segments without whitespace; at least one subject with at least one field.
+Whether a DPT exists is checked downstream against the catalog.
 
 ## Install
 

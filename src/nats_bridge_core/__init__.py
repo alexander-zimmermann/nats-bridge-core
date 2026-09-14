@@ -3,11 +3,12 @@
 What lives here is what was byte-identical or mechanically identical across
 every bridge — logging, the metrics server, the JetStream publish loop, the
 NATS half of settings — plus plumbing every bridge would otherwise copy
-verbatim, the tracing wiring. Device lifecycle — connecting to hardware,
-polling, normalising payloads — stays in each bridge.
+verbatim: the tracing wiring and the KNX descriptor schema and loader.
+Device lifecycle — connecting to hardware, polling, normalising payloads —
+stays in each bridge.
 """
 
-from . import tracing
+from . import knx_descriptor, tracing
 from .config import LogFormat, NatsSettings
 from .logging_setup import (
     LOG_EMIT_RECOVERY_WINDOW_SECONDS,
@@ -28,6 +29,7 @@ __all__ = [
     "PublisherMetrics",
     "TrackedStreamHandler",
     "configure",
+    "knx_descriptor",
     "serve",
     "tracing",
     "watchdog_ok",
