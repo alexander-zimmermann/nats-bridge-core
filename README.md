@@ -91,6 +91,9 @@ subjects:            # keyed by the subject suffix after the device segment
         dpt: "7.006"
         min_delta: 1
         min_delta_pct: 5            # optional, ≥ 0
+      info:
+        datapoint: [Hinweis-Fertig, Hinweis]  # candidates, tried in order
+        dpt: "1.005"
   environment:
     fields:
       temperature_c:
@@ -98,15 +101,22 @@ subjects:            # keyed by the subject suffix after the device segment
         dpt: "9.001"
 ```
 
+A `datapoint` list covers a family whose products name the same datapoint
+differently (Miele's `info` is `Hinweis-Fertig` on the dishwasher and `Hinweis`
+on the microwave): the generator takes the first candidate the catalog has for
+that device, so the descriptor still says nothing about which devices exist.
+
 `knx_descriptor.load_package("miele_nats_bridge")` returns the typed
-`Descriptor` (`subjects[suffix].fields[name]` with `datapoint`, `dpt`,
-`payload_path` and the behaviour keys); `knx_descriptor.load(path)` reads a
-file. Unknown keys, a missing `datapoint` or `dpt`, a DPT outside `main.sub`,
-negative deltas, duplicate keys and unquoted YAML words (`on`, `yes`) raise
-`DescriptorError` listing every offending field — a bridge's CI loads its own
-descriptor so a typo fails there, not in the generator. Subject suffixes are
-single NATS tokens, field names JSON identifiers, datapoints dot-separated
-segments without whitespace; at least one subject with at least one field.
+`Descriptor` (`subjects[suffix].fields[name]` with `datapoints` — always a
+tuple, one entry for a scalar `datapoint` — `dpt`, `payload_path` and the
+behaviour keys); `knx_descriptor.load(path)` reads a file. Unknown keys, a
+missing `datapoint` or `dpt`, an empty candidate list or a repeated candidate, a DPT
+outside `main.sub`, negative deltas, duplicate keys and unquoted YAML words
+(`on`, `yes`) raise `DescriptorError` listing every offending field — a
+bridge's CI loads its own descriptor so a typo fails there, not in the
+generator. Subject suffixes are single NATS tokens, field names JSON
+identifiers, datapoints dot-separated segments without whitespace; at least
+one subject with at least one field.
 Whether a DPT exists is checked downstream against the catalog.
 
 ## Install

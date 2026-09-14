@@ -21,7 +21,14 @@
             "additionalProperties": {
               "type": "object",
               "properties": {
-                "datapoint":     { "type": "string", "pattern": "^[^\\s.]+(\\.[^\\s.]+)*$" },
+                "datapoint": {
+                  "description": "One datapoint name, or candidates tried in order when the name differs between products of the family.",
+                  "type": ["string", "array"],
+                  "pattern": "^[^\\s.]+(\\.[^\\s.]+)*$",
+                  "items": { "type": "string", "pattern": "^[^\\s.]+(\\.[^\\s.]+)*$" },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
                 "dpt":           { "type": "string", "pattern": "^[0-9]+\\.[0-9]{3}$" },
                 "seed_on_start": { "type": "boolean" },
                 "min_delta":     { "type": "number", "minimum": 0 },

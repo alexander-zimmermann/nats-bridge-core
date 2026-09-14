@@ -45,15 +45,23 @@ def test_valid_descriptor_loads_into_typed_model(tmp_path: Path) -> None:
     assert state.suffix == "state"
     assert list(state.fields) == ["status", "remaining_minutes"]
     assert state.fields["status"] == FieldDescriptor(
-        name="status", datapoint="Status", dpt="5.010", seed_on_start=True, min_delta=0
+        name="status", datapoints=("Status",), dpt="5.010", seed_on_start=True, min_delta=0
     )
     assert state.fields["remaining_minutes"] == FieldDescriptor(
         name="remaining_minutes",
-        datapoint="Restzeit",
+        datapoints=("Restzeit",),
         dpt="7.006",
         min_delta=1,
         min_delta_pct=5,
     )
+
+
+def test_datapoint_list_keeps_candidates_in_order(tmp_path: Path) -> None:
+    text = VALID.replace("datapoint: Status\n", "datapoint: [Hinweis-Fertig, Hinweis]\n")
+
+    descriptor = knx_descriptor.load(write_descriptor(tmp_path, text))
+
+    assert descriptor.subjects["state"].fields["status"].datapoints == ("Hinweis-Fertig", "Hinweis")
 
 
 def test_behaviour_keys_default_to_off(tmp_path: Path) -> None:
@@ -75,7 +83,7 @@ def test_load_from_package_resource() -> None:
     descriptor = knx_descriptor.load_package("knx_descriptor_fixture")
 
     assert list(descriptor.subjects) == ["state", "environment"]
-    assert descriptor.subjects["state"].fields["filter_life"].datapoint == "Filter.Restlaufzeit"
+    assert descriptor.subjects["state"].fields["filter_life"].datapoints == ("Filter.Restlaufzeit",)
     assert descriptor.subjects["environment"].fields["pm25"].dpt == "9.030"
 
 
@@ -151,6 +159,21 @@ def test_unknown_package_is_a_descriptor_error() -> None:
             VALID.replace("        datapoint: Status\n", "        datapoint: ''\n"),
             ["status", "datapoint"],
             id="empty-datapoint",
+        ),
+        pytest.param(
+            VALID.replace("datapoint: Status\n", "datapoint: []\n"),
+            ["status", "datapoint"],
+            id="empty-datapoint-list",
+        ),
+        pytest.param(
+            VALID.replace("datapoint: Status\n", "datapoint: [Hinweis, Hinweis]\n"),
+            ["status", "datapoint"],
+            id="duplicate-datapoint-candidates",
+        ),
+        pytest.param(
+            VALID.replace("datapoint: Status\n", "datapoint: [Hinweis, Hin weis]\n"),
+            ["status", "datapoint"],
+            id="datapoint-candidate-with-whitespace",
         ),
         pytest.param(
             VALID.split("  environment:\n")[0] + "  environment:\n    fields: {}\n",
