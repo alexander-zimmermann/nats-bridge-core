@@ -31,8 +31,8 @@ class DescriptorError(ValueError):
 class FieldDescriptor:
     # Payload field name; the writer reads it at `$.<name>`
     name: str
-    # Last segment(s) of the group-address name, e.g. `Programm-Phase`
-    datapoint: str
+    # Last segment(s) of the group-address name, e.g. `Programm-Phase`; candidates in order
+    datapoints: tuple[str, ...]
     # `main.sub` with a three-digit sub, as in the writer rules and the catalog
     dpt: str
     seed_on_start: bool = False
@@ -108,6 +108,10 @@ def _validator() -> jsonschema.Draft202012Validator:
     return jsonschema.Draft202012Validator(json.loads(schema.read_text(encoding="utf-8")))
 
 
+def _candidates(datapoint: str | list[str]) -> tuple[str, ...]:
+    return (datapoint,) if isinstance(datapoint, str) else tuple(datapoint)
+
+
 def _parse(text: str, *, source: str) -> Descriptor:
     try:
         data: Any = yaml.load(text, Loader=_StrictLoader)
@@ -132,7 +136,7 @@ def _parse(text: str, *, source: str) -> Descriptor:
             fields={
                 name: FieldDescriptor(
                     name=name,
-                    datapoint=raw["datapoint"],
+                    datapoints=_candidates(raw["datapoint"]),
                     dpt=raw["dpt"],
                     seed_on_start=raw.get("seed_on_start", False),
                     min_delta=raw.get("min_delta"),
