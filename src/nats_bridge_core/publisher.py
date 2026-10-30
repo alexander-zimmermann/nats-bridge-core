@@ -20,6 +20,7 @@ from opentelemetry.trace import StatusCode
 
 from . import tracing
 from .config import NatsSettings
+from .connection import connect
 
 logger = logging.getLogger(__name__)
 
@@ -84,23 +85,12 @@ class Publisher:
         if self._nc and self._nc.is_connected:
             return
 
-        kwargs = self._settings.nats_auth_kwargs()
-        kwargs.update(
-            servers=self._settings.nats_servers_list,
-            max_reconnect_attempts=-1,
-            reconnect_time_wait=2,
-            connect_timeout=10,
-            disconnected_cb=self._on_disconnect,
-            reconnected_cb=self._on_reconnect,
-            closed_cb=self._on_closed,
-            error_cb=self._on_error,
+        self._nc = await connect(
+            self._settings.nats_servers_list,
+            connected=self._metrics.set_connected,
+            **self._settings.nats_auth_kwargs(),
         )
-
-        self._nc = NatsClient()
-        await self._nc.connect(**kwargs)
         self._js = self._nc.jetstream()
-        self._metrics.set_connected(True)
-        logger.info("connected to NATS: %s", self._settings.nats_servers_list)
 
         if self._settings.nats_stream_check:
             await self._verify_stream()
@@ -274,18 +264,3 @@ class Publisher:
                 backoff *= 2
 
         return reason
-
-    async def _on_disconnect(self) -> None:
-        self._metrics.set_connected(False)
-        logger.warning("nats disconnected")
-
-    async def _on_reconnect(self) -> None:
-        self._metrics.set_connected(True)
-        logger.info("nats reconnected")
-
-    async def _on_closed(self) -> None:
-        self._metrics.set_connected(False)
-        logger.warning("nats client closed")
-
-    async def _on_error(self, err: Exception) -> None:
-        logger.warning("nats error callback: %s", err)

@@ -10,6 +10,7 @@ stays in each bridge.
 
 from . import knx_descriptor, tracing
 from .config import LogFormat, NatsSettings
+from .connection import connect
 from .logging_setup import (
     LOG_EMIT_RECOVERY_WINDOW_SECONDS,
     JsonFormatter,
@@ -29,6 +30,7 @@ __all__ = [
     "PublisherMetrics",
     "TrackedStreamHandler",
     "configure",
+    "connect",
     "knx_descriptor",
     "serve",
     "tracing",
