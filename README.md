@@ -13,7 +13,8 @@ descriptor):
 | --- | --- |
 | `logging_setup` | JSON formatter, stdout-failure-tracking handler, log-emit watchdog |
 | `metrics` | the `/metrics` and `/healthz` HTTP server |
-| `publisher` | JetStream publish with ack, retry, ordered queue, reconnect, drain on shutdown |
+| `connection` | `connect()`: one client that reconnects for as long as the pod lives, one warning line per failed attempt, a gauge hook |
+| `publisher` | JetStream publish with ack, retry, ordered queue, drain on shutdown; connects through `connection` |
 | `tracing` | OTLP tracer provider, W3C trace context over NATS headers, producer/consumer spans |
 | `config` | `NatsSettings` — NATS connection, auth precedence, observability fields |
 | `knx_descriptor` | schema and loader for the `knx.yaml` a bridge ships: field → datapoint, DPT, writer behaviour |
